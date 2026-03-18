@@ -1,8 +1,9 @@
 // ============================================================
 // PayGuard — PDF Text Extraction Service
 // ============================================================
-// Polyfill DOMMatrix for Next.js / Vercel Serverless environments 
-// pdf.js (used by pdf-parse) crashes if it detects a partial browser environment without DOMMatrix.
+
+// 1. Polyfill DOMMatrix for Next.js / Vercel Serverless environments 
+// MUST trigger BEFORE pdf-parse is required, as pdf.js strictly evaluates globals on import.
 if (typeof globalThis !== 'undefined' && typeof (globalThis as any).DOMMatrix === 'undefined') {
   (globalThis as any).DOMMatrix = class DOMMatrix {
     a = 1; b = 0; c = 0; d = 1; e = 0; f = 0;
@@ -15,6 +16,10 @@ if (typeof globalThis !== 'undefined' && typeof (globalThis as any).DOMMatrix ==
   } as any;
 }
 
+// 2. Safely require pdf-parse at the top level so Vercel NFT traces it reliably
+// Since serverExternalPackages is set, Webpack will not minify its internals ("s is not a function")
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const pdfParse = require('pdf-parse');
 
 export interface PdfExtractionResult {
   text: string;
@@ -29,10 +34,7 @@ export interface PdfExtractionResult {
 
 export async function extractTextFromPdf(buffer: Buffer): Promise<PdfExtractionResult> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const pdfParseModule = require('pdf-parse');
-    const parseFunction = pdfParseModule.default || pdfParseModule;
-    const data = await parseFunction(buffer);
+    const data = await pdfParse(buffer);
 
     // Estimate confidence based on text quality
     const text = data.text || '';
