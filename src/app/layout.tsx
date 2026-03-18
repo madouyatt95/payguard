@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { ToastProvider } from "./components/Toast";
 import ThemeToggle from "./components/ThemeToggle";
+import AuthNav from "./components/AuthNav";
 
 export const metadata: Metadata = {
   title: "PayGuard — Vérification de Bulletins de Paie",
@@ -48,7 +49,7 @@ export default function RootLayout({
                 <li><a href="/pricing">Tarifs</a></li>
                 <li><a href="/help">Aide</a></li>
                 <li><ThemeToggle /></li>
-                <li><a href="/upload" className="nav-cta">📤 Analyser un bulletin</a></li>
+                <li><AuthNav /></li>
               </ul>
             </div>
           </nav>

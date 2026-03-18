@@ -18,6 +18,18 @@ if (supabaseUrl && supabaseKey) {
   console.warn('⚠️ Supabase credentials not found in environment variables. Falling back to local JSON persistence.');
 }
 
+// Helper to get authenticated user ID for RLS Row Ownership
+async function getCurrentUserId(): Promise<string | undefined> {
+  try {
+    const { createClientServer } = await import('@/utils/supabase/server');
+    const serverClient = await createClientServer();
+    const { data: { user } } = await serverClient.auth.getUser();
+    return user?.id; // undefined if not logged in
+  } catch (e) {
+    return undefined;
+  }
+}
+
 // Local Fallback Helpers
 const DATA_DIR = join(process.cwd(), '.payguard-data');
 function ensureDir() {
@@ -56,6 +68,7 @@ export interface DbDocument {
 }
 
 export async function createDocument(data: { fileName: string; fileSize: number; mimeType: string; profileId?: string; }): Promise<DbDocument> {
+  const userId = await getCurrentUserId();
   const docData = { ...data, status: 'uploaded' };
   
   if (supabase) {
@@ -64,6 +77,7 @@ export async function createDocument(data: { fileName: string; fileSize: number;
       file_size: docData.fileSize,
       mime_type: docData.mimeType,
       profile_id: docData.profileId,
+      user_id: userId, // Assuming user_id column is used for RLS
       status: docData.status
     }).select().single();
     
@@ -90,6 +104,8 @@ export async function createDocument(data: { fileName: string; fileSize: number;
 }
 
 export async function updateDocumentStatus(id: string, status: string, extra?: Partial<DbDocument>): Promise<DbDocument | null> {
+  const userId = await getCurrentUserId();
+  
   if (supabase) {
     const updateData: any = { status };
     if (extra?.rawText !== undefined) updateData.raw_text = extra.rawText;
@@ -97,8 +113,10 @@ export async function updateDocumentStatus(id: string, status: string, extra?: P
     if (extra?.parsedData !== undefined) updateData.parsed_data = extra.parsedData;
     if (extra?.reportData !== undefined) updateData.report_data = extra.reportData;
 
-    const { data, error } = await supabase.from('documents')
-      .update(updateData).eq('id', id).select().single();
+    let query = supabase.from('documents').update(updateData).eq('id', id);
+    if (userId) query = query.eq('user_id', userId); // Secure RLS constraint
+
+    const { data, error } = await query.select().single();
       
     if (error || !data) return null;
     return {
@@ -118,8 +136,13 @@ export async function updateDocumentStatus(id: string, status: string, extra?: P
 }
 
 export async function getDocument(id: string): Promise<DbDocument | null> {
+  const userId = await getCurrentUserId();
+  
   if (supabase) {
-    const { data, error } = await supabase.from('documents').select('*').eq('id', id).single();
+    let query = supabase.from('documents').select('*').eq('id', id);
+    if (userId) query = query.eq('user_id', userId); // Secure RLS constraint
+    
+    const { data, error } = await query.single();
     if (error || !data) return null;
     return {
       id: data.id, fileName: data.file_name, fileSize: data.file_size, mimeType: data.mime_type, status: data.status,
@@ -131,8 +154,13 @@ export async function getDocument(id: string): Promise<DbDocument | null> {
 }
 
 export async function getAllDocuments(): Promise<DbDocument[]> {
+  const userId = await getCurrentUserId();
+  
   if (supabase) {
-    const { data, error } = await supabase.from('documents').select('*').order('created_at', { ascending: false });
+    let query = supabase.from('documents').select('*').order('created_at', { ascending: false });
+    if (userId) query = query.eq('user_id', userId); // Secure RLS constraint
+    
+    const { data, error } = await query;
     if (error || !data) return [];
     return data.map(d => ({
       id: d.id, fileName: d.file_name, fileSize: d.file_size, mimeType: d.mime_type, status: d.status,
@@ -144,8 +172,12 @@ export async function getAllDocuments(): Promise<DbDocument[]> {
 }
 
 export async function deleteDocument(id: string): Promise<void> {
+  const userId = await getCurrentUserId();
+  
   if (supabase) {
-    await supabase.from('documents').delete().eq('id', id);
+    let query = supabase.from('documents').delete().eq('id', id);
+    if (userId) query = query.eq('user_id', userId); // Secure RLS constraint
+    await query;
     return;
   }
   const docs = readStore<DbDocument>('documents.json');
@@ -172,12 +204,15 @@ export interface DbProfile {
 }
 
 export async function createProfile(data: Omit<DbProfile, 'id' | 'createdAt'>): Promise<DbProfile> {
+  const userId = await getCurrentUserId();
+  
   if (supabase) {
     const { data: inserted, error } = await supabase.from('employee_profiles').insert({
       name: data.name, is_full_time: data.isFullTime, is_cadre: data.isCadre, weekly_hours: data.weeklyHours,
       collective_agreement: data.collectiveAgreement, contract_type: data.contractType, bonus_variation_max: data.bonusVariationMax,
       hours_variation_max: data.hoursVariationMax, net_gross_ratio_min: data.netGrossRatioMin,
-      net_gross_ratio_max: data.netGrossRatioMax, salary_variation_max: data.salaryVariationMax
+      net_gross_ratio_max: data.netGrossRatioMax, salary_variation_max: data.salaryVariationMax,
+      user_id: userId // Binding to RLS
     }).select().single();
     if (error) throw new Error(error.message);
     return {
@@ -197,6 +232,8 @@ export async function createProfile(data: Omit<DbProfile, 'id' | 'createdAt'>): 
 }
 
 export async function updateProfile(id: string, data: Partial<DbProfile>): Promise<DbProfile | null> {
+  const userId = await getCurrentUserId();
+  
   if (supabase) {
     const updateData: any = {};
     if (data.name !== undefined) updateData.name = data.name;
@@ -211,7 +248,10 @@ export async function updateProfile(id: string, data: Partial<DbProfile>): Promi
     if (data.netGrossRatioMax !== undefined) updateData.net_gross_ratio_max = data.netGrossRatioMax;
     if (data.salaryVariationMax !== undefined) updateData.salary_variation_max = data.salaryVariationMax;
 
-    const { data: updated, error } = await supabase.from('employee_profiles').update(updateData).eq('id', id).select().single();
+    let query = supabase.from('employee_profiles').update(updateData).eq('id', id);
+    if (userId) query = query.eq('user_id', userId); // Secure constraint
+    
+    const { data: updated, error } = await query.select().single();
     if (error || !updated) return null;
     return {
       id: updated.id, name: updated.name, isFullTime: updated.is_full_time, isCadre: updated.is_cadre,
@@ -231,8 +271,13 @@ export async function updateProfile(id: string, data: Partial<DbProfile>): Promi
 }
 
 export async function getAllProfiles(): Promise<DbProfile[]> {
+  const userId = await getCurrentUserId();
+  
   if (supabase) {
-    const { data, error } = await supabase.from('employee_profiles').select('*').order('created_at', { ascending: false });
+    let query = supabase.from('employee_profiles').select('*').order('created_at', { ascending: false });
+    if (userId) query = query.eq('user_id', userId);
+    
+    const { data, error } = await query;
     if (error || !data) return [];
     return data.map(d => ({
       id: d.id, name: d.name, isFullTime: d.is_full_time, isCadre: d.is_cadre,
@@ -246,8 +291,12 @@ export async function getAllProfiles(): Promise<DbProfile[]> {
 }
 
 export async function deleteProfile(id: string): Promise<void> {
+  const userId = await getCurrentUserId();
+  
   if (supabase) {
-    await supabase.from('employee_profiles').delete().eq('id', id);
+    let query = supabase.from('employee_profiles').delete().eq('id', id);
+    if (userId) query = query.eq('user_id', userId);
+    await query;
     return;
   }
   const profiles = readStore<DbProfile>('profiles.json');
@@ -260,8 +309,10 @@ export async function deleteProfile(id: string): Promise<void> {
 export interface DbAuditLog { id: string; action: string; documentId?: string; details?: string; timestamp: string; }
 
 export async function logAudit(action: string, documentId?: string, details?: string): Promise<void> {
+  const userId = await getCurrentUserId();
+  
   if (supabase) {
-    await supabase.from('audit_logs').insert({ action, document_id: documentId, details });
+    await supabase.from('audit_logs').insert({ action, document_id: documentId, details, user_id: userId });
     return;
   }
   const logs = readStore<DbAuditLog>('audit.json');

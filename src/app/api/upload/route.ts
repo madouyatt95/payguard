@@ -44,21 +44,50 @@ export async function POST(request: NextRequest) {
     // Update status: extracting
     await updateDocumentStatus(doc.id, 'extracting');
 
-    // Extract text from PDF
+    // Extract text from PDF or Image
     const buffer = Buffer.from(await file.arrayBuffer());
-    let rawText: string;
-    let extractionConfidence: number;
+    let rawText = '';
+    let extractionConfidence = 1.0;
 
     if (file.type === 'application/pdf') {
       const extraction = await extractTextFromPdf(buffer);
+      if (!extraction.text.trim()) {
+        return NextResponse.json({
+          error: 'Le PDF semble être un scan (image sans texte intégrable). Veuillez le convertir en image (JPG/PNG) ou fournir un PDF numérique.',
+          documentId: doc.id,
+        }, { status: 422 });
+      }
       rawText = extraction.text;
       extractionConfidence = extraction.confidence;
     } else {
-      // For images, we'd need OCR - for now return helpful message
-      return NextResponse.json({
-        error: 'L\'analyse d\'images nécessite un service OCR. Veuillez utiliser un fichier PDF.',
-        documentId: doc.id,
-      }, { status: 422 });
+      // It's an image: Run Tesseract.js OCR
+      const Tesseract = (await import('tesseract.js')).default;
+      
+      // Update status to feedback to user that AI is running
+      await updateDocumentStatus(doc.id, 'extracting_ai');
+      
+      try {
+        const result = await Tesseract.recognize(
+          buffer,
+          'fra', // French dictionary
+          { logger: m => console.log(m) }
+        );
+        rawText = result.data.text;
+        extractionConfidence = result.data.confidence / 100; // Tesseract returns 0-100, we use 0-1
+        
+        if (extractionConfidence < 0.3) {
+            return NextResponse.json({
+                error: "La qualité de l'image est trop faible pour être lue correctement. Veuillez fournir une capture plus nette.",
+                documentId: doc.id,
+              }, { status: 422 });
+        }
+      } catch (err) {
+        console.error('Tesseract OCR error:', err);
+        return NextResponse.json({
+          error: "Échec de l'intelligence artificielle de reconnaissance de caractères (OCR).",
+          documentId: doc.id,
+        }, { status: 500 });
+      }
     }
 
     // Update status: parsing

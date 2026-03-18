@@ -1,152 +1,103 @@
-'use client';
+import { getAllDocuments } from '@/server/services/db/service';
+import DashboardCharts from './DashboardCharts';
+import { StructuredPayrollDocument, AnalysisReport } from '@/server/types';
 
-import { useEffect, useState } from 'react';
-
-interface Scenario {
-  id: string;
-  name: string;
-  description: string;
-  icon: string;
-  tags: string[];
-}
-
-interface Report {
-  globalScore: number;
-  globalStatus: string;
-  anomaliesCount: number;
-  criticalCount: number;
-  importantCount: number;
-  reviewCount: number;
-  extractionQuality: number;
-}
-
-export default function DashboardPage() {
-  const [scenarios, setScenarios] = useState<Scenario[]>([]);
-  const [reports, setReports] = useState<Record<string, Report>>({});
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    async function load() {
-      try {
-        const res = await fetch('/api/demo?action=scenarios');
-        const data = await res.json();
-        setScenarios(data.data || []);
-
-        // Load reports for each scenario
-        const reps: Record<string, Report> = {};
-        for (const s of (data.data || [])) {
-          const r = await fetch(`/api/demo?action=report&scenario=${s.id}`);
-          const rd = await r.json();
-          if (rd.success) reps[s.id] = rd.data;
-        }
-        setReports(reps);
-      } catch (e) {
-        console.error(e);
-      }
-      setLoading(false);
+// Next.js App Router Server Component
+export default async function DashboardPage() {
+  // 1. Fetch live user documents securely
+  const docs = await getAllDocuments();
+  
+  // Filter for docs that have been fully analyzed
+  const analyzedDocs = docs.filter(d => d.status === 'done' && d.parsedData && d.reportData);
+  
+  // 2. Compute Top-Level Stats
+  const totalDocs = analyzedDocs.length;
+  let totalScore = 0;
+  let totalCritical = 0;
+  
+  const parsedDocs: { doc: any, parsed: StructuredPayrollDocument, report: AnalysisReport }[] = [];
+  
+  for (const d of analyzedDocs) {
+    try {
+      const parsed = JSON.parse(d.parsedData!) as StructuredPayrollDocument;
+      const report = JSON.parse(d.reportData!) as AnalysisReport;
+      parsedDocs.push({ doc: d, parsed, report });
+      totalScore += report.globalScore;
+      totalCritical += report.criticalCount;
+    } catch (e) {
+      // ignore parse errors
     }
-    load();
-  }, []);
-
-  const totalDocs = scenarios.length;
-  const avgScore = Object.values(reports).reduce((a, r) => a + r.globalScore, 0) / (Object.keys(reports).length || 1);
-  const totalCritical = Object.values(reports).reduce((a, r) => a + r.criticalCount, 0);
+  }
+  
+  const avgScore = totalDocs > 0 ? totalScore / totalDocs : 0;
+  
+  // 3. Build Chart Data (Salary History)
+  // Sort docs from oldest to newest for the timeline
+  const sortedDocs = [...parsedDocs].sort((a, b) => 
+    new Date(a.doc.createdAt).getTime() - new Date(b.doc.createdAt).getTime()
+  );
+  
+  const salaryHistory = sortedDocs.map((item, idx) => {
+    // If there is a period defined in the payslip, use it, otherwise use month index
+    const periodName = item.parsed.payPeriod?.month?.value || `Doc ${idx + 1}`;
+    return {
+      month: periodName,
+      gross: item.parsed.grossSalary?.value || 0,
+      net: item.parsed.netToPay?.value || 0,
+      score: item.report.globalScore
+    };
+  });
+  
+  // 4. Build Pie Chart Data (Contributions breakdown of the most recent doc)
+  const latestContributions = [];
+  if (sortedDocs.length > 0) {
+    const latest = sortedDocs[sortedDocs.length - 1];
+    
+    // Group contributions into high-level categories for a clean pie chart
+    let csg = 0;
+    let retraite = 0;
+    let sante = 0;
+    let chomage = 0;
+    let autres = 0;
+    
+    // We sum the employee contributions per category
+    for (const c of latest.parsed.socialContributions || []) {
+      const name = c.label.toLowerCase();
+      const amount = c.employeeAmount || 0;
+      if (name.includes('csg') || name.includes('crds')) csg += amount;
+      else if (name.includes('retraite') || name.includes('vieillesse') || name.includes('agirc') || name.includes('arrco')) retraite += amount;
+      else if (name.includes('maladie') || name.includes('santé') || name.includes('mutuelle') || name.includes('prévoyance')) sante += amount;
+      else if (name.includes('chômage') || name.includes('assedic')) chomage += amount;
+      else autres += amount;
+    }
+    
+    if (csg > 0) latestContributions.push({ name: 'CSG/CRDS', value: csg });
+    if (retraite > 0) latestContributions.push({ name: 'Retraite', value: retraite });
+    if (sante > 0) latestContributions.push({ name: 'Santé & Prév.', value: sante });
+    if (chomage > 0) latestContributions.push({ name: 'Chômage', value: chomage });
+    if (autres > 0) latestContributions.push({ name: 'Autres', value: autres });
+  }
 
   return (
     <>
       <div className="page-header">
         <div className="container">
           <h1>Tableau de bord</h1>
-          <p>Vue d&apos;ensemble de vos analyses de bulletins de paie</p>
+          <p>Vue d&apos;ensemble de vos analyses et de l&apos;évolution de vos revenus</p>
         </div>
       </div>
 
       <section style={{ padding: '2rem 0' }}>
-        <div className="container">
-          {/* Stats */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '2rem' }}>
-            <div className="card" style={{ textAlign: 'center', padding: '1.5rem' }}>
-              <div style={{ fontSize: '2rem', fontWeight: 800 }}>{totalDocs}</div>
-              <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Documents analysés</div>
-            </div>
-            <div className="card" style={{ textAlign: 'center', padding: '1.5rem' }}>
-              <div style={{ fontSize: '2rem', fontWeight: 800, color: avgScore >= 70 ? 'var(--accent-green)' : avgScore >= 40 ? 'var(--accent-orange)' : 'var(--accent-red)' }}>
-                {loading ? '...' : Math.round(avgScore)}
-              </div>
-              <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Score moyen</div>
-            </div>
-            <div className="card" style={{ textAlign: 'center', padding: '1.5rem' }}>
-              <div style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--accent-red)' }}>{totalCritical}</div>
-              <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Alertes critiques</div>
-            </div>
-            <div className="card" style={{ textAlign: 'center', padding: '1.5rem' }}>
-              <div style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--accent-primary-light)' }}>18</div>
-              <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Règles actives</div>
-            </div>
-          </div>
-
-          {/* Scenarios */}
-          <h2 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '1rem' }}>📋 Scénarios de démonstration</h2>
-          <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
-            Cliquez sur un scénario pour voir l&apos;analyse complète. Ces bulletins fictifs illustrent les capacités de détection de PayGuard.
-          </p>
-
-          {loading ? (
-            <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
-              <div style={{ fontSize: '2rem', marginBottom: '1rem' }}>⏳</div>
-              Chargement des analyses...
-            </div>
-          ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '1rem' }}>
-              {scenarios.map(s => {
-                const report = reports[s.id];
-                return (
-                  <a key={s.id} href={`/example?scenario=${s.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
-                    <div className="card" style={{ cursor: 'pointer', height: '100%' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                          <span style={{ fontSize: '1.5rem' }}>{s.icon}</span>
-                          <div>
-                            <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>{s.name}</div>
-                          </div>
-                        </div>
-                        {report && (
-                          <div className={`badge badge-${report.globalStatus}`}>
-                            {report.globalScore}/100
-                          </div>
-                        )}
-                      </div>
-                      <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.75rem', lineHeight: 1.5 }}>
-                        {s.description}
-                      </p>
-                      <div className="scenario-tags">
-                        {s.tags.map(t => (
-                          <span key={t} className="scenario-tag">{t}</span>
-                        ))}
-                      </div>
-                      {report && (
-                        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', flexWrap: 'wrap' }}>
-                          {report.criticalCount > 0 && <span className="badge badge-critical">🔴 {report.criticalCount} critique(s)</span>}
-                          {report.importantCount > 0 && <span className="badge badge-important">⚠️ {report.importantCount} important(s)</span>}
-                          {report.reviewCount > 0 && <span className="badge badge-review">🔍 {report.reviewCount} à vérifier</span>}
-                        </div>
-                      )}
-                    </div>
-                  </a>
-                );
-              })}
-            </div>
-          )}
-
-          {/* Comparison CTA */}
-          <div className="card" style={{ marginTop: '2rem', padding: '2rem', textAlign: 'center', background: 'var(--gradient-card)', border: '1px solid var(--border-accent)' }}>
-            <h3 style={{ marginBottom: '0.5rem' }}>📊 Comparaison multi-bulletins</h3>
-            <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem', fontSize: '0.9rem' }}>
-              Comparez une série de 4 bulletins et identifiez les variations anormales mois par mois.
-            </p>
-            <a href="/comparison" className="btn-primary">Voir la comparaison</a>
-          </div>
-        </div>
+        <DashboardCharts 
+          stats={{
+            totalDocs,
+            avgScore,
+            totalCritical,
+            activeRules: 18 // Demo logic, technically we have 18 rule definitions inside RuleEngine
+          }}
+          salaryHistory={salaryHistory}
+          latestContributions={latestContributions}
+        />
       </section>
     </>
   );
