@@ -25,7 +25,9 @@ export async function extractTextFromPdf(buffer: Buffer): Promise<PdfExtractionR
       });
 
       pdfParser.on("pdfParser_dataReady", (pdfData: any) => {
-        const text = pdfParser.getRawTextContent() || '';
+        // Reconstruct visual structure by sorting native PDF string blocks by their Y and X coordinates
+        // This solves disjointed table layouts where numbers are separated from their labels.
+        const text = reconstructTextFromCoordinates(pdfData) || '';
         
         // Estimate confidence based on text quality
         const confidence = estimateTextConfidence(text);
@@ -86,4 +88,69 @@ function cleanExtractedText(text: string): string {
     .replace(/\n{3,}/g, '\n\n')
     .replace(/[ \t]+/g, ' ')
     .trim();
+}
+
+/**
+ * Mathematically rebuilds table rows by grouping disconnected PDF text blocks 
+ * that share identical (within a micro-tolerance) vertical coordinates.
+ * This ensures "Gross Salary" and its monetary values remain on the exact same line,
+ * crucial for our subsequent Regex pipeline.
+ */
+function reconstructTextFromCoordinates(pdfData: any): string {
+  let fullText = '';
+  // pdf2json Y coordinates: 0.5 unit tolerance usually easily encompasses visually aligned texts
+  const Y_TOLERANCE = 0.5; 
+
+  if (!pdfData || !pdfData.formImage || !Array.isArray(pdfData.formImage.Pages)) {
+    return '';
+  }
+
+  for (const page of pdfData.formImage.Pages) {
+    if (!page.Texts) continue;
+    
+    // Group texts by Y coordinate
+    const lines: { y: number; texts: { x: number; text: string }[] }[] = [];
+
+    for (const textItem of page.Texts) {
+      if (!textItem.R || textItem.R.length === 0) continue;
+      
+      // decodeURIComponent translates the URL-encoded hex strings exported by pdf2json
+      const rawString = textItem.R.map((r: any) => {
+        try {
+            return decodeURIComponent(r.T);
+        } catch(e) {
+            return r.T; // fallback if bad encoding
+        }
+      }).join('');
+      
+      const cleanedString = rawString.trim();
+      if (!cleanedString) continue;
+
+      const y = textItem.y;
+      const x = textItem.x;
+
+      // Scan for a vertically aligned horizontal text line
+      let line = lines.find(l => Math.abs(l.y - y) <= Y_TOLERANCE);
+      if (!line) {
+        line = { y: y, texts: [] };
+        lines.push(line);
+      }
+      
+      line.texts.push({ x: x, text: cleanedString });
+    }
+
+    // Sort lines by Y (top to bottom)
+    lines.sort((a, b) => a.y - b.y);
+
+    // Sort text blocks within each line by X (left to right) and join cleanly.
+    for (const line of lines) {
+      line.texts.sort((a, b) => a.x - b.x);
+      
+      // Spacing preserves distinct chunks for regex matchers downstream
+      const lineStr = line.texts.map(t => t.text).join('   ');
+      fullText += lineStr + '\n';
+    }
+  }
+
+  return fullText;
 }
