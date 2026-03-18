@@ -1,30 +1,27 @@
 // ============================================================
 // PayGuard — Database Service (Supabase & Local Fallback)
 // ============================================================
-import { createClient } from '@supabase/supabase-js';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 
-// Supabase Initialization
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-type Database = any;
-
-let supabase: ReturnType<typeof createClient<Database>> | null = null;
-if (supabaseUrl && supabaseKey) {
-  supabase = createClient<Database>(supabaseUrl, supabaseKey);
-} else {
-  console.warn('⚠️ Supabase credentials not found in environment variables. Falling back to local JSON persistence.');
-}
-
-// Helper to get authenticated user ID for RLS Row Ownership
-async function getCurrentUserId(): Promise<string | undefined> {
+// Helper to get authenticated client and user ID
+async function getAuthClient() {
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_URL.includes('supabase.co')) {
+    return null;
+  }
   try {
     const { createClientServer } = await import('@/utils/supabase/server');
-    const serverClient = await createClientServer();
-    const { data: { user } } = await serverClient.auth.getUser();
-    return user?.id; // undefined if not logged in
+    return await createClientServer();
+  } catch (e) {
+    return null;
+  }
+}
+
+async function getCurrentUserId(client: any): Promise<string | undefined> {
+  if (!client) return undefined;
+  try {
+    const { data: { user } } = await client.auth.getUser();
+    return user?.id;
   } catch (e) {
     return undefined;
   }
@@ -68,11 +65,12 @@ export interface DbDocument {
 }
 
 export async function createDocument(data: { fileName: string; fileSize: number; mimeType: string; profileId?: string; }): Promise<DbDocument> {
-  const userId = await getCurrentUserId();
+  const client = await getAuthClient();
+  const userId = await getCurrentUserId(client);
   const docData = { ...data, status: 'uploaded' };
   
-  if (supabase) {
-    const { data: inserted, error } = await supabase.from('documents').insert({
+  if (client) {
+    const { data: inserted, error } = await client.from('documents').insert({
       file_name: docData.fileName,
       file_size: docData.fileSize,
       mime_type: docData.mimeType,
@@ -104,16 +102,17 @@ export async function createDocument(data: { fileName: string; fileSize: number;
 }
 
 export async function updateDocumentStatus(id: string, status: string, extra?: Partial<DbDocument>): Promise<DbDocument | null> {
-  const userId = await getCurrentUserId();
+  const client = await getAuthClient();
+  const userId = await getCurrentUserId(client);
   
-  if (supabase) {
+  if (client) {
     const updateData: any = { status };
     if (extra?.rawText !== undefined) updateData.raw_text = extra.rawText;
     if (extra?.extractionConfidence !== undefined) updateData.extraction_confidence = extra.extractionConfidence;
     if (extra?.parsedData !== undefined) updateData.parsed_data = extra.parsedData;
     if (extra?.reportData !== undefined) updateData.report_data = extra.reportData;
 
-    let query = supabase.from('documents').update(updateData).eq('id', id);
+    let query = client.from('documents').update(updateData).eq('id', id);
     if (userId) query = query.eq('user_id', userId); // Secure RLS constraint
 
     const { data, error } = await query.select().single();
@@ -136,10 +135,11 @@ export async function updateDocumentStatus(id: string, status: string, extra?: P
 }
 
 export async function getDocument(id: string): Promise<DbDocument | null> {
-  const userId = await getCurrentUserId();
+  const client = await getAuthClient();
+  const userId = await getCurrentUserId(client);
   
-  if (supabase) {
-    let query = supabase.from('documents').select('*').eq('id', id);
+  if (client) {
+    let query = client.from('documents').select('*').eq('id', id);
     if (userId) query = query.eq('user_id', userId); // Secure RLS constraint
     
     const { data, error } = await query.single();
@@ -154,10 +154,11 @@ export async function getDocument(id: string): Promise<DbDocument | null> {
 }
 
 export async function getAllDocuments(): Promise<DbDocument[]> {
-  const userId = await getCurrentUserId();
+  const client = await getAuthClient();
+  const userId = await getCurrentUserId(client);
   
-  if (supabase) {
-    let query = supabase.from('documents').select('*').order('created_at', { ascending: false });
+  if (client) {
+    let query = client.from('documents').select('*').order('created_at', { ascending: false });
     if (userId) query = query.eq('user_id', userId); // Secure RLS constraint
     
     const { data, error } = await query;
@@ -172,10 +173,11 @@ export async function getAllDocuments(): Promise<DbDocument[]> {
 }
 
 export async function deleteDocument(id: string): Promise<void> {
-  const userId = await getCurrentUserId();
+  const client = await getAuthClient();
+  const userId = await getCurrentUserId(client);
   
-  if (supabase) {
-    let query = supabase.from('documents').delete().eq('id', id);
+  if (client) {
+    let query = client.from('documents').delete().eq('id', id);
     if (userId) query = query.eq('user_id', userId); // Secure RLS constraint
     await query;
     return;
@@ -204,10 +206,11 @@ export interface DbProfile {
 }
 
 export async function createProfile(data: Omit<DbProfile, 'id' | 'createdAt'>): Promise<DbProfile> {
-  const userId = await getCurrentUserId();
+  const client = await getAuthClient();
+  const userId = await getCurrentUserId(client);
   
-  if (supabase) {
-    const { data: inserted, error } = await supabase.from('employee_profiles').insert({
+  if (client) {
+    const { data: inserted, error } = await client.from('employee_profiles').insert({
       name: data.name, is_full_time: data.isFullTime, is_cadre: data.isCadre, weekly_hours: data.weeklyHours,
       collective_agreement: data.collectiveAgreement, contract_type: data.contractType, bonus_variation_max: data.bonusVariationMax,
       hours_variation_max: data.hoursVariationMax, net_gross_ratio_min: data.netGrossRatioMin,
@@ -232,9 +235,10 @@ export async function createProfile(data: Omit<DbProfile, 'id' | 'createdAt'>): 
 }
 
 export async function updateProfile(id: string, data: Partial<DbProfile>): Promise<DbProfile | null> {
-  const userId = await getCurrentUserId();
+  const client = await getAuthClient();
+  const userId = await getCurrentUserId(client);
   
-  if (supabase) {
+  if (client) {
     const updateData: any = {};
     if (data.name !== undefined) updateData.name = data.name;
     if (data.isFullTime !== undefined) updateData.is_full_time = data.isFullTime;
@@ -248,7 +252,7 @@ export async function updateProfile(id: string, data: Partial<DbProfile>): Promi
     if (data.netGrossRatioMax !== undefined) updateData.net_gross_ratio_max = data.netGrossRatioMax;
     if (data.salaryVariationMax !== undefined) updateData.salary_variation_max = data.salaryVariationMax;
 
-    let query = supabase.from('employee_profiles').update(updateData).eq('id', id);
+    let query = client.from('employee_profiles').update(updateData).eq('id', id);
     if (userId) query = query.eq('user_id', userId); // Secure constraint
     
     const { data: updated, error } = await query.select().single();
@@ -271,10 +275,11 @@ export async function updateProfile(id: string, data: Partial<DbProfile>): Promi
 }
 
 export async function getAllProfiles(): Promise<DbProfile[]> {
-  const userId = await getCurrentUserId();
+  const client = await getAuthClient();
+  const userId = await getCurrentUserId(client);
   
-  if (supabase) {
-    let query = supabase.from('employee_profiles').select('*').order('created_at', { ascending: false });
+  if (client) {
+    let query = client.from('employee_profiles').select('*').order('created_at', { ascending: false });
     if (userId) query = query.eq('user_id', userId);
     
     const { data, error } = await query;
@@ -291,10 +296,11 @@ export async function getAllProfiles(): Promise<DbProfile[]> {
 }
 
 export async function deleteProfile(id: string): Promise<void> {
-  const userId = await getCurrentUserId();
+  const client = await getAuthClient();
+  const userId = await getCurrentUserId(client);
   
-  if (supabase) {
-    let query = supabase.from('employee_profiles').delete().eq('id', id);
+  if (client) {
+    let query = client.from('employee_profiles').delete().eq('id', id);
     if (userId) query = query.eq('user_id', userId);
     await query;
     return;
@@ -309,10 +315,11 @@ export async function deleteProfile(id: string): Promise<void> {
 export interface DbAuditLog { id: string; action: string; documentId?: string; details?: string; timestamp: string; }
 
 export async function logAudit(action: string, documentId?: string, details?: string): Promise<void> {
-  const userId = await getCurrentUserId();
+  const client = await getAuthClient();
+  const userId = await getCurrentUserId(client);
   
-  if (supabase) {
-    await supabase.from('audit_logs').insert({ action, document_id: documentId, details, user_id: userId });
+  if (client) {
+    await client.from('audit_logs').insert({ action, document_id: documentId, details, user_id: userId });
     return;
   }
   const logs = readStore<DbAuditLog>('audit.json');
@@ -325,8 +332,10 @@ export async function logAudit(action: string, documentId?: string, details?: st
 // Identity Usage (Anti-Abuse V2.1)
 // ============================================================
 export async function checkAndIncrementIdentityLimit(identityHash: string, maxLimit = 3): Promise<boolean> {
-  if (supabase) {
-    const { data, error } = await supabase.rpc('increment_identity_usage', {
+  const client = await getAuthClient();
+  
+  if (client) {
+    const { data, error } = await client.rpc('increment_identity_usage', {
       p_identity_hash: identityHash,
       p_max_limit: maxLimit
     });
