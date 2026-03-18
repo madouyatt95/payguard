@@ -33,9 +33,9 @@ export async function extractTextFromPdf(buffer: Buffer): Promise<PdfExtractionR
       },
       confidence,
     };
-  } catch (error) {
+  } catch (error: any) {
     console.error('PDF extraction error:', error);
-    throw new Error('Impossible de lire le fichier PDF. Assurez-vous que le fichier n\'est pas protégé ou corrompu.');
+    throw new Error(`Impossible de lire le fichier PDF. Assurez-vous que le fichier n'est pas protégé ou corrompu. (Détail technique : ${error.message || 'unknown error'})`);
   }
 }
 

@@ -11,6 +11,7 @@ const withPWA = nextPWA({
 const nextConfig = {
   reactStrictMode: true,
   turbopack: {},
+  serverExternalPackages: ['pdf-parse'],
 };
 
 export default withPWA(nextConfig);
