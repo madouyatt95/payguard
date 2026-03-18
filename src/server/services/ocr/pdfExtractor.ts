@@ -1,25 +1,7 @@
 // ============================================================
-// PayGuard — PDF Text Extraction Service
+// PayGuard — PDF Text Extraction Service (via pdf2json)
 // ============================================================
-
-// 1. Polyfill DOMMatrix for Next.js / Vercel Serverless environments 
-// MUST trigger BEFORE pdf-parse is required, as pdf.js strictly evaluates globals on import.
-if (typeof globalThis !== 'undefined' && typeof (globalThis as any).DOMMatrix === 'undefined') {
-  (globalThis as any).DOMMatrix = class DOMMatrix {
-    a = 1; b = 0; c = 0; d = 1; e = 0; f = 0;
-    constructor(init?: number[] | string) {
-      if (Array.isArray(init) && init.length === 6) {
-        this.a = init[0]; this.b = init[1]; this.c = init[2];
-        this.d = init[3]; this.e = init[4]; this.f = init[5];
-      }
-    }
-  } as any;
-}
-
-// 2. Safely require pdf-parse at the top level so Vercel NFT traces it reliably
-// Since serverExternalPackages is set, Webpack will not minify its internals ("s is not a function")
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const pdfParse = require('pdf-parse');
+import PDFParser from 'pdf2json';
 
 export interface PdfExtractionResult {
   text: string;
@@ -33,27 +15,39 @@ export interface PdfExtractionResult {
 }
 
 export async function extractTextFromPdf(buffer: Buffer): Promise<PdfExtractionResult> {
-  try {
-    const data = await pdfParse(buffer);
+  return new Promise((resolve, reject) => {
+    try {
+      const pdfParser = new PDFParser(null, 1 as any);
 
-    // Estimate confidence based on text quality
-    const text = data.text || '';
-    const confidence = estimateTextConfidence(text);
+      pdfParser.on("pdfParser_dataError", (errData: any) => {
+        console.error('PDF extraction error:', errData.parserError);
+        reject(new Error(`Impossible de lire le fichier PDF. Moteur d'extraction en échec. (Détail: ${errData.parserError?.message || 'Inconnu'})`));
+      });
 
-    return {
-      text: cleanExtractedText(text),
-      pages: data.numpages || 1,
-      info: {
-        title: data.info?.Title,
-        author: data.info?.Author,
-        creationDate: data.info?.CreationDate,
-      },
-      confidence,
-    };
-  } catch (error: any) {
-    console.error('PDF extraction error:', error);
-    throw new Error(`Impossible de lire le fichier PDF. Assurez-vous que le fichier n'est pas protégé ou corrompu. (Détail technique : ${error.message || 'unknown error'})`);
-  }
+      pdfParser.on("pdfParser_dataReady", (pdfData: any) => {
+        const text = pdfParser.getRawTextContent() || '';
+        
+        // Estimate confidence based on text quality
+        const confidence = estimateTextConfidence(text);
+        
+        resolve({
+          text: cleanExtractedText(text),
+          pages: pdfData.Pages ? pdfData.Pages.length : 1,
+          info: {
+            title: pdfData.Meta?.Title,
+            author: pdfData.Meta?.Author,
+            creationDate: pdfData.Meta?.CreationDate,
+          },
+          confidence,
+        });
+      });
+
+      pdfParser.parseBuffer(buffer);
+    } catch (e: any) {
+      console.error('PDF extraction exception:', e);
+      reject(new Error(`Impossible de lire le fichier PDF. Assurez-vous que le fichier n'est pas protégé. (Détail technique : ${e.message || 'unknown error'})`));
+    }
+  });
 }
 
 function estimateTextConfidence(text: string): number {
