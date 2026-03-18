@@ -141,6 +141,16 @@ body {
   transform: translateY(-1px);
 }
 
+.mobile-menu-btn {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 1.7rem;
+  cursor: pointer;
+  padding: 0.5rem;
+}
+
 /* ============================================================
    Hero
    ============================================================ */
@@ -874,7 +884,28 @@ body {
   .hero-subtitle { font-size: 1rem; }
   .hero-actions { flex-direction: column; }
   .btn-primary, .btn-secondary { width: 100%; justify-content: center; }
-  .navbar-links { display: none; }
+  
+  .mobile-menu-btn { display: block; }
+  .navbar-links { 
+    display: none; 
+    position: absolute;
+    top: 64px;
+    left: 0;
+    right: 0;
+    background: var(--bg-card);
+    flex-direction: column;
+    padding: 2rem 1.5rem;
+    border-bottom: 1px solid var(--border-subtle);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    height: 100vh;
+    align-items: flex-start;
+  }
+  .navbar-links.active {
+    display: flex;
+  }
+  .navbar-links li { width: 100%; }
+  .navbar-links a { display: block; padding: 0.5rem 0; font-size: 1.1rem; }
+  
   .features-grid { grid-template-columns: 1fr; }
   .pricing-grid { grid-template-columns: 1fr; }
   .data-table { font-size: 0.75rem; }
