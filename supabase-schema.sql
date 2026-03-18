@@ -100,3 +100,48 @@ CREATE TRIGGER update_documents_updated_at
 BEFORE UPDATE ON public.documents
 FOR EACH ROW
 EXECUTE FUNCTION update_updated_at_column();
+
+-- ==============================================================================
+-- IDENTITY USAGE LIMITS (ANTI-ABUSE V2.1)
+-- ==============================================================================
+
+CREATE TABLE IF NOT EXISTS public.identity_usage_limits (
+    identity_hash TEXT PRIMARY KEY,
+    analysis_count INTEGER NOT NULL DEFAULT 0,
+    last_analysis_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Enable RLS (we bypass it via RPC with SECURITY DEFINER)
+ALTER TABLE public.identity_usage_limits ENABLE ROW LEVEL SECURITY;
+
+-- We want the server to increment via RPC securely
+CREATE OR REPLACE FUNCTION increment_identity_usage(p_identity_hash TEXT, p_max_limit INTEGER)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    current_count INTEGER;
+BEGIN
+    -- Get or create the record, locking it for update
+    INSERT INTO public.identity_usage_limits (identity_hash, analysis_count)
+    VALUES (p_identity_hash, 0)
+    ON CONFLICT (identity_hash) DO NOTHING;
+    
+    SELECT analysis_count INTO current_count 
+    FROM public.identity_usage_limits 
+    WHERE identity_hash = p_identity_hash 
+    FOR UPDATE;
+    
+    IF current_count >= p_max_limit THEN
+        RETURN FALSE; -- Limit reached
+    END IF;
+    
+    -- Increment
+    UPDATE public.identity_usage_limits 
+    SET analysis_count = analysis_count + 1, last_analysis_at = now()
+    WHERE identity_hash = p_identity_hash;
+    
+    RETURN TRUE; -- Allowed
+END;
+$$;

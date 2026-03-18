@@ -320,3 +320,36 @@ export async function logAudit(action: string, documentId?: string, details?: st
   if (logs.length > 500) logs.splice(0, logs.length - 500);
   writeStore('audit.json', logs);
 }
+
+// ============================================================
+// Identity Usage (Anti-Abuse V2.1)
+// ============================================================
+export async function checkAndIncrementIdentityLimit(identityHash: string, maxLimit = 3): Promise<boolean> {
+  if (supabase) {
+    const { data, error } = await supabase.rpc('increment_identity_usage', {
+      p_identity_hash: identityHash,
+      p_max_limit: maxLimit
+    });
+    
+    if (error) {
+      console.error('Error checking identity limit:', error);
+      return true; // Fail-open to avoid blocking users if DB errors out
+    }
+    return data === true;
+  }
+  
+  // Local Fallback
+  const limits = readStore<{ hash: string; count: number }>('identity_limits.json');
+  const idx = limits.findIndex((l: any) => l.hash === identityHash);
+  if (idx === -1) {
+    limits.push({ hash: identityHash, count: 1 });
+    writeStore('identity_limits.json', limits);
+    return true;
+  }
+  
+  if (limits[idx].count >= maxLimit) return false;
+  
+  limits[idx].count += 1;
+  writeStore('identity_limits.json', limits);
+  return true;
+}

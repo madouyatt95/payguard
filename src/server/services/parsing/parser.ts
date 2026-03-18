@@ -14,6 +14,7 @@ import {
 } from '@/server/types';
 import { TextNormalizer, NormalizationResult } from './normalizer';
 import { v4 as uuid } from 'uuid';
+import { createHash } from 'crypto';
 
 // ============================================================
 // Helpers
@@ -234,7 +235,14 @@ export class StructuredPayrollParser {
     const entryMatch = entryLine?.line.match(/(\d{2}\/\d{2}\/\d{4})/);
     const statusValue = statusLine?.line.match(/(Cadre|Non\s*cadre)/i)?.[1] || null;
 
+    let identityHash: string | undefined;
+    const cleanSs = ssValue?.replace(/\s/g, '').substring(0, 13);
+    if (cleanSs && cleanSs.length >= 13) {
+      identityHash = createHash('sha256').update(cleanSs).digest('hex');
+    }
+
     return {
+      identityHash,
       fullName: makeField(nameValue, nameLine?.line || '', nameValue ? baseConf : 0.2, nameValue ? 'regex' : 'not-found'),
       registrationNumber: makeField(matValue, matLine?.line || '', matValue ? baseConf : 0.15, matValue ? 'regex' : 'not-found'),
       socialSecurityNumber: makeField(ssValue, ssLine?.line || '', ssValue ? baseConf * 0.9 : 0.1, ssValue ? 'regex' : 'not-found'),

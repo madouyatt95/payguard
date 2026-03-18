@@ -144,6 +144,7 @@ export interface StructuredPayrollDocument {
   // Identity
   employeeIdentity: {
     fullName: ParsedField<string>;
+    identityHash?: string;
     registrationNumber?: ParsedField<string>;
     socialSecurityNumber?: ParsedField<string>;
     position?: ParsedField<string>;

@@ -10,6 +10,7 @@ import { AnalysisPipeline } from '@/server/services/analysis/pipeline';
 import {
   createDocument,
   updateDocumentStatus,
+  checkAndIncrementIdentityLimit,
 } from '@/server/services/db/service';
 
 export async function POST(request: NextRequest) {
@@ -107,6 +108,20 @@ export async function POST(request: NextRequest) {
       doc.id,
       extractionConfidence
     );
+
+    // Security: Check Identity Limit based on SSN Hash
+    const identityHash = parsedDoc.employeeIdentity.identityHash;
+    if (identityHash) {
+      // Hard limit of 3 free analyses per physical identity across all accounts
+      const isAllowed = await checkAndIncrementIdentityLimit(identityHash, 3);
+      if (!isAllowed) {
+        await updateDocumentStatus(doc.id, 'failed'); // Just fail the document silently in DB
+        return NextResponse.json({
+          error: 'Vous avez atteint la limite de 3 bulletins analysés (plafond gratuit) autorisée pour cette personne physique.',
+          documentId: doc.id,
+        }, { status: 429 });
+      }
+    }
 
     // Update status: analyzing
     await updateDocumentStatus(doc.id, 'analyzing', {
