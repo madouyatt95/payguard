@@ -57,16 +57,34 @@ function extractAmount(text: string): number | null {
 
 function extractLastAmount(text: string): number | null {
   const matches = [...text.matchAll(/([-]?\s*\d[\d\s]*[.,]\d{2})\s*€?/g)];
-  if (matches.length === 0) return null;
-  const last = matches[matches.length - 1][1].replace(/\s/g, '').replace(',', '.');
-  return parseFloat(last);
+  if (matches.length > 0) {
+    const last = matches[matches.length - 1][1].replace(/\s/g, '').replace(',', '.');
+    return parseFloat(last);
+  }
+  
+  // Legacy PDF/Dot-Matrix fallback: sometimes amounts lack decimals completely (e.g. "543382" instead of "5433,82")
+  // If the line ends with a pure large number, we heuristically deduce the last two digits are cents.
+  const trailingMatch = text.match(/([-]?\d[\d\s]+)\s*€?$/);
+  if (trailingMatch) {
+    const rawVal = parseInt(trailingMatch[1].replace(/\s/g, ''), 10);
+    // If > 10000 (i.e. 100.00 euros), assume it's cents.
+    if (rawVal > 10000) return rawVal / 100;
+    return rawVal; // Unsafe to divide smaller numbers, leave as is
+  }
+  return null;
 }
 
 function extractAllAmounts(text: string): number[] {
-  const matches = [...text.matchAll(/([-]?\s*\d[\d\s]*[.,]\d{2})/g)];
-  return matches
-    .map(m => parseFloat(m[1].replace(/\s/g, '').replace(',', '.')))
-    .filter(v => !isNaN(v));
+  // Standard dot/comma separated values
+  let matches = [...text.matchAll(/([-]?\s*\d[\d\s]*[.,]\d{2})/g)];
+  let parsed = matches.map(m => parseFloat(m[1].replace(/\s/g, '').replace(',', '.'))).filter(v => !isNaN(v));
+  
+  // Fallback for implied-cents legacy PDFs (e.g. 262375 -> 2623.75)
+  if (parsed.length === 0) {
+    const rawDigits = [...text.matchAll(/([-]?\b\d{4,}\b)/g)];
+    parsed = rawDigits.map(m => parseInt(m[1], 10) / 100).filter(v => !isNaN(v));
+  }
+  return parsed;
 }
 
 function extractPercentage(text: string): number | null {
@@ -524,10 +542,10 @@ export class StructuredPayrollParser {
   }
 
   private parseTotals(lines: string[], baseConf: number) {
-    const grossLine = findLine(lines, /TOTAL\s*BRUT/i, /Brut\s*mensuel/i);
+    const grossLine = findLine(lines, /TOTAL\s*BRUT/i, /Brut\s*mensuel/i, /R[eé]mun[eé]ration\s*Brute/i);
     const netTaxLine = findLine(lines, /NET\s*IMPOSABLE/i, /NET\s*FISCAL/i);
-    const netPayLine = findLine(lines, /NET\s*[ÀA]\s*PAYER(?!\s*AVANT)/i);
-    const netPayBeforeTaxLine = findLine(lines, /NET\s*[ÀA]\s*PAYER\s*AVANT/i);
+    const netPayLine = findLine(lines, /NET\s*[ÀA]?\s*PAYER(?!\s*AVANT)/i);
+    const netPayBeforeTaxLine = findLine(lines, /NET\s*[ÀA]?\s*PAYER\s*AVANT/i);
 
     return {
       gross: makeField(
