@@ -9,14 +9,12 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "@prisma/client": "^7.5.0",
     "@supabase/supabase-js": "^2.99.2",
     "crypto-js": "^4.2.0",
     "jspdf": "^4.2.1",
     "next": "16.1.7",
     "next-pwa": "^5.6.0",
     "pdf-parse": "^2.4.5",
-    "prisma": "^7.5.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "uuid": "^13.0.0",
