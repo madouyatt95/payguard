@@ -30,8 +30,9 @@ export interface PdfExtractionResult {
 export async function extractTextFromPdf(buffer: Buffer): Promise<PdfExtractionResult> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const pdfParse = require('pdf-parse');
-    const data = await pdfParse(buffer);
+    const pdfParseModule = require('pdf-parse');
+    const parseFunction = pdfParseModule.default || pdfParseModule;
+    const data = await parseFunction(buffer);
 
     // Estimate confidence based on text quality
     const text = data.text || '';
